@@ -1,0 +1,6 @@
+# Telegram Bot Framework
+python-telegram-bot==21.4
+apscheduler==3.10.4
+pytz==2023.3.post1
+httpx==0.27.2
+python-dotenv==1.0.1
