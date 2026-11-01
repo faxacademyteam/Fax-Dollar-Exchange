@@ -142,7 +142,7 @@ async def timeout_question_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception:
         pass
 
-    # Save to LOCAL DB and API simultaneously
+    # Save to LOCAL DB first
     upsert_user(
         telegram_user_id=user_id,
         telegram_name=name,
@@ -151,16 +151,17 @@ async def timeout_question_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         status="NOT_ELIGIBLE"
     )
 
-    # Use local DB to determine if update or insert needed
-    existing = get_user(user_id)
-    if existing:
-        result = sheets_api.update_user(
-            telegram_user_id=user_id,
-            telegram_name=name,
-            username=username,
-            has_vantage_account="NO_RESPONSE"
-        )
-    else:
+    # Try update first, fall back to insert if user not in API yet
+    result = sheets_api.update_user(
+        telegram_user_id=user_id,
+        telegram_name=name,
+        username=username,
+        has_vantage_account="NO_RESPONSE"
+    )
+
+    # If update fails because user not found, insert instead
+    if not result.get("success") and "User not found" in str(result.get("error", "")):
+        logger.info("User %s not in API yet, inserting...", user_id)
         result = sheets_api.insert_user(
             telegram_user_id=user_id,
             telegram_name=name,
@@ -170,6 +171,8 @@ async def timeout_question_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not result.get("success"):
         logger.warning("Sheets API operation failed for user %s (timeout): %s", user_id, result.get("error"))
+    else:
+        logger.info("API success for user %s (timeout): %s", user_id, result)
 
 
 async def send_question_with_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, name: str, username: str = "") -> None:
@@ -345,7 +348,7 @@ async def on_callback_yes(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         status="ELIGIBLE"
     )
 
-    # Push to Google Sheets - use update_user for existing users
+    # Push to Google Sheets - try update first, fall back to insert
     result = sheets_api.update_user(
         telegram_user_id=telegram_user_id,
         telegram_name=user.full_name,
@@ -353,8 +356,18 @@ async def on_callback_yes(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         has_vantage_account="YES"
     )
 
+    # If update fails because user not found, insert instead
+    if not result.get("success") and "User not found" in str(result.get("error", "")):
+        logger.info("User %s not in API yet, inserting...", telegram_user_id)
+        result = sheets_api.insert_user(
+            telegram_user_id=telegram_user_id,
+            telegram_name=user.full_name,
+            username=user.username or "",
+            has_vantage_account="YES"
+        )
+
     if not result.get("success"):
-        logger.warning("Sheets API update failed for user %s: %s", telegram_user_id, result.get("error"))
+        logger.warning("Sheets API operation failed for user %s: %s", telegram_user_id, result.get("error"))
 
     try:
         # Edit message with result
@@ -407,7 +420,7 @@ async def on_callback_no(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         status="NOT_ELIGIBLE"
     )
 
-    # Push to Google Sheets - use update_user for existing users
+    # Push to Google Sheets - try update first, fall back to insert
     result = sheets_api.update_user(
         telegram_user_id=telegram_user_id,
         telegram_name=user.full_name,
@@ -415,8 +428,18 @@ async def on_callback_no(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         has_vantage_account="NO"
     )
 
+    # If update fails because user not found, insert instead
+    if not result.get("success") and "User not found" in str(result.get("error", "")):
+        logger.info("User %s not in API yet, inserting...", telegram_user_id)
+        result = sheets_api.insert_user(
+            telegram_user_id=telegram_user_id,
+            telegram_name=user.full_name,
+            username=user.username or "",
+            has_vantage_account="NO"
+        )
+
     if not result.get("success"):
-        logger.warning("Sheets API update failed for user %s: %s", telegram_user_id, result.get("error"))
+        logger.warning("Sheets API operation failed for user %s: %s", telegram_user_id, result.get("error"))
 
     try:
         # Edit message with result
