@@ -6,7 +6,7 @@ import os
 import time
 from telegram.ext import Application, CommandHandler
 from telegram import Update
-from telegram.error import NetworkError, TimedOut
+from telegram.error import NetworkError, TimedOut, Conflict
 from telegram.ext import ContextTypes, filters
 from config import config
 from database import init_db
@@ -61,30 +61,34 @@ async def post_shutdown(application: Application) -> None:
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Global error handler - notify admin on error and shut down immediately."""
+    """Global error handler - logs errors but keeps bot running for network issues."""
     error = context.error
     tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
 
-    # Log the full error
+    # Skip expected polling errors - bot should keep running
+    if isinstance(error, (NetworkError, TimedOut)):
+        logger.warning("Network issue (polling will auto-recover): %s", error)
+        return
+    if isinstance(error, Conflict):
+        # Conflict means another bot instance is running - just log it
+        logger.warning("Bot conflict detected (another instance running): %s", error)
+        return
+
+    # Log all other errors
     logger.error("Unhandled error in update handler:\n%s", tb)
 
-    # Notify admin and shut down
+    # Notify admin only for unexpected errors (not network issues)
     admin_id = config.ADMIN_USER_ID
     if admin_id:
         try:
             error_msg = (
-                f"🚨 <b>Bot Error / Crash Alert</b>\n\n"
+                f"⚠️ <b>Bot Error Alert</b>\n\n"
                 f"<b>Type:</b> {type(error).__name__}\n"
-                f"<b>Message:</b> {str(error)[:500]}\n"
-                f"<b>Status:</b> Bot is shutting down immediately."
+                f"<b>Message:</b> {str(error)[:500]}"
             )
             await context.bot.send_message(chat_id=admin_id, text=error_msg, parse_mode="HTML")
         except Exception as notify_err:
             logger.error("Failed to send error notification: %s", notify_err)
-
-    # Exit process immediately on crash
-    logger.critical("Shutting down due to unhandled error...")
-    os._exit(1)
 
 
 def is_admin(update: Update) -> bool:
