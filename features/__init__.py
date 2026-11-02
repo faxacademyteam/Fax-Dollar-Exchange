@@ -1,0 +1,1 @@
+# Features Package - Auto-discovers and registers feature handlers

@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from telegram import Bot
 from telegram.error import TelegramError
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -12,10 +13,10 @@ logger = logging.getLogger(__name__)
 
 OPEN_NOTICE = (
     "<blockquote>⏰ <b>Buy-Sell Time: 10 AM – 6 PM</b></blockquote>\n\n"
-    "🟢 <b>গ্রুপ OPEN হযেছ! 🏦</b>\n\n"
+    "🟢 <b>গ্রুপ OPEN হয়েছে! 🏦</b>\n\n"
     "আজ সকাল ১০টা থেকে ডলার Buy-Sell কার্যক্রম "
-    "শুরু হযেছে। এখন আপনারা ডলার কেনা-বেচা "
-    "করতে পারবেন।\n"
+    "শুরু হয়েছে। এখন আপনারা ডলার কেনা-বেচা "
+    "করতে পারবেন。\n"
     "━━━━━━━━━━━━━━━━━━\n"
     "🔴 <b>Group Auto OFF:</b> সন্ধ্যা ৬টায়।\n\n"
     "<blockquote>🙏 <b>ধন্যবাদ | Thank You</b> 🤍</blockquote>"
@@ -24,7 +25,7 @@ OPEN_NOTICE = (
 CLOSE_NOTICE = (
     "<blockquote>⏰ <b>Buy-Sell Time: 10 AM – 6 PM</b></blockquote>\n\n"
     "🔴 <b>আজকের মতো গ্রুপ বন্ধ!</b>\n"
-    "আজ সন্ধ্যা ৬টায় গ্রুপ অটো OFF হযেছে।\n"
+    "আজ সন্ধ্যা ৬টায় গ্রুপ অটো OFF হয়েছে।\n"
     "━━━━━━━━━━━━━━━━━━\n"
     "🟢 <b>Tomorrow:</b> সকাল ১০টায় গ্রুপ "
     "আবার অটো OPEN হবে।\n\n"
@@ -61,7 +62,6 @@ async def set_group_permissions(bot: Bot, allow: bool) -> None:
         logger.info("Group permissions updated: %s", "UNLOCKED" if allow else "LOCKED")
     except TelegramError as e:
         logger.error("Failed to set chat permissions: %s", e)
-        raise
 
 
 async def send_pin_wait_unpin(bot: Bot, text: str) -> None:
@@ -82,7 +82,6 @@ async def send_pin_wait_unpin(bot: Bot, text: str) -> None:
         )
         logger.info("Message %d sent and pinned with notification", message_id)
 
-        import asyncio
         await asyncio.sleep(60)
 
         await bot.unpin_chat_message(
@@ -93,21 +92,43 @@ async def send_pin_wait_unpin(bot: Bot, text: str) -> None:
 
     except TelegramError as e:
         logger.error("Failed to send/pin/unpin message: %s", e)
-        raise
 
 
-async def unlock_job(bot: Bot) -> None:
-    """10:00 AM job - unlock group and send OPEN notice."""
+def run_async(coro):
+    """Helper to run async functions from APScheduler synchronous thread."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, loop)
+        else:
+            loop.run_until_complete(coro)
+    except Exception as e:
+        logger.error("Error running scheduled job: %s", e)
+
+
+def unlock_job(bot: Bot) -> None:
+    """10:00 AM job - unlock group and send OPEN notice (sync wrapper for APScheduler)."""
     logger.info("Running unlock job (10:00 AM)")
-    await set_group_permissions(bot, allow=True)
-    await send_pin_wait_unpin(bot, OPEN_NOTICE)
+    async def task():
+        await set_group_permissions(bot, allow=True)
+        await send_pin_wait_unpin(bot, OPEN_NOTICE)
+    run_async(task())
 
 
-async def lock_job(bot: Bot) -> None:
-    """6:00 PM job - lock group and send OFF notice."""
+def lock_job(bot: Bot) -> None:
+    """6:00 PM job - lock group and send OFF notice (sync wrapper for APScheduler)."""
     logger.info("Running lock job (6:00 PM)")
-    await set_group_permissions(bot, allow=False)
-    await send_pin_wait_unpin(bot, CLOSE_NOTICE)
+    async def task():
+        await set_group_permissions(bot, allow=False)
+        await send_pin_wait_unpin(bot, CLOSE_NOTICE)
+    run_async(task())
+
+
+def periodic_sync_job(bot: Bot) -> None:
+    """Periodic sync wrapper for APScheduler."""
+    async def task():
+        await periodic_sync(bot)
+    run_async(task())
 
 
 def setup_scheduler(bot: Bot) -> BackgroundScheduler:
@@ -136,7 +157,7 @@ def setup_scheduler(bot: Bot) -> BackgroundScheduler:
 
     # Periodic sync from API (every 24 hours by default)
     scheduler.add_job(
-        periodic_sync,
+        periodic_sync_job,
         IntervalTrigger(hours=config.SYNC_INTERVAL_HOURS, timezone=config.TIMEZONE),
         args=[bot],
         id="periodic_sync",

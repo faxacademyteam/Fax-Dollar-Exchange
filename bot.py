@@ -3,8 +3,10 @@ import asyncio
 import traceback
 import sys
 import os
+import time
 from telegram.ext import Application, CommandHandler
 from telegram import Update
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import ContextTypes, filters
 from config import config
 from database import init_db
@@ -171,42 +173,51 @@ def main() -> None:
     """Main entry point - polling mode only, optimized for low resource usage."""
     config.validate()
 
-    # Build application with minimal settings for low resource usage
-    application = (
-        Application.builder()
-        .token(config.BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .concurrent_updates(True)
-        .read_timeout(30)
-        .write_timeout(30)
-        .connect_timeout(30)
-        .pool_timeout(30)
-        .build()
-    )
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            application = (
+                Application.builder()
+                .token(config.BOT_TOKEN)
+                .post_init(post_init)
+                .post_shutdown(post_shutdown)
+                .concurrent_updates(True)
+                .read_timeout(30)
+                .write_timeout(30)
+                .connect_timeout(30)
+                .pool_timeout(30)
+                .build()
+            )
 
-    # Add error handler
-    application.add_error_handler(error_handler)
+            application.add_error_handler(error_handler)
+            for handler in get_eligibility_handlers():
+                application.add_handler(handler)
+            application.add_handler(CommandHandler("stats", stats_command))
+            application.add_handler(CommandHandler("health", health_command))
+            application.add_handler(CommandHandler("sync", sync_command))
+            application.add_handler(CommandHandler("stop", stop_command))
+            application.add_handler(CommandHandler("restart", restart_command))
 
-    # Add eligibility handlers (group message processing)
-    for handler in get_eligibility_handlers():
-        application.add_handler(handler)
-
-    # Add admin commands (case-insensitive via lowercase)
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("health", health_command))
-    application.add_handler(CommandHandler("sync", sync_command))
-    application.add_handler(CommandHandler("stop", stop_command))
-    application.add_handler(CommandHandler("restart", restart_command))
-
-    # Polling mode only - optimized for low CPU
-    logger.info("Starting polling mode (Admin ID: %s)", config.ADMIN_USER_ID)
-    application.run_polling(
-        allowed_updates=["message", "callback_query"],
-        drop_pending_updates=True,
-        poll_interval=1.0,
-        timeout=30
-    )
+            logger.info("Starting polling mode (Admin ID: %s)", config.ADMIN_USER_ID)
+            application.run_polling(
+                allowed_updates=["message", "callback_query"],
+                drop_pending_updates=True,
+                poll_interval=1.0,
+                timeout=30
+            )
+            break
+        except (NetworkError, TimedOut) as e:
+            if attempt < max_retries - 1:
+                wait = 10 * (attempt + 1)
+                logger.warning("Network error during startup: %s. Retrying in %ds... (%d/%d)", e, wait, attempt + 1, max_retries)
+                time.sleep(wait)
+            else:
+                logger.critical("Max retries (%d) reached. Bot cannot start. Shutting down.", max_retries)
+                sys.exit(1)
+        except Exception as e:
+            logger.critical("Unhandled startup error: %s", e)
+            logger.critical(traceback.format_exc())
+            sys.exit(1)
 
 
 if __name__ == "__main__":
