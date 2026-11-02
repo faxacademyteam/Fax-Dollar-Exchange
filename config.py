@@ -18,6 +18,12 @@ class Config:
 
     # Database
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", str(PROJECT_ROOT / "data" / "bot.db"))
+    SCHEDULE_DB_PATH: str = os.getenv("SCHEDULE_DB_PATH", str(PROJECT_ROOT / "data" / "schedule.db"))
+
+    # Schedule integrity settings
+    SAFETY_CHECK_INTERVAL_MIN: int = int(os.getenv("SAFETY_CHECK_INTERVAL_MIN", "30"))
+    SCHEDULE_RETENTION_DAYS: int = int(os.getenv("SCHEDULE_RETENTION_DAYS", "7"))
+    MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
 
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

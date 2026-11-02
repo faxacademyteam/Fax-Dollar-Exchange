@@ -246,14 +246,15 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Check for admin or Fax Team roles (member status)
     try:
         member = await context.bot.get_chat_member(
-            chat_id=update.effective_chat.id, 
+            chat_id=update.effective_chat.id,
             user_id=update.message.from_user.id
         )
         # Admins have 'creator' or 'administrator' status
         if member.status in ('creator', 'administrator'):
             return
-        # You can also check custom titles if this is a supergroup
-        if member.custom_title and ('Admin' in member.custom_title or 'Fax Team' in member.custom_title):
+        # Check custom_title safely (some API versions may not have it)
+        custom_title = getattr(member, 'custom_title', None)
+        if custom_title and ('Admin' in custom_title or 'Fax Team' in custom_title):
             return
     except Exception as e:
         logger.warning("Could not check member status for %s: %s", update.message.from_user.id, e)

@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes, filters
 from config import config
 from database import init_db
 from eligibility import get_eligibility_handlers, startup_sync, periodic_sync
-from schedule import setup_scheduler
+from schedule import setup_scheduler, safety_check_job, get_today_schedule
 
 # Configure logging - minimal format for low memory
 logging.basicConfig(
@@ -34,6 +34,9 @@ async def post_init(application: Application) -> None:
 
     # Initialize database
     init_db()
+
+    # Startup schedule check - recover from any missed unlock/lock
+    await safety_check_job(application.bot)
 
     # Startup sync from Google Sheets
     await startup_sync(application)
@@ -147,6 +150,44 @@ async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Sync complete")
 
 
+async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /schedule - show today's schedule status (Admin DM only)."""
+    if not is_admin(update):
+        return
+
+    import pytz
+    from datetime import datetime
+    tz = pytz.timezone(config.TIMEZONE)
+    now = datetime.now(tz)
+    date_str = now.strftime("%Y-%m-%d")
+
+    from schedule_db import get_today_schedule
+    records = get_today_schedule(date_str)
+
+    unlock = records.get("unlock")
+    lock = records.get("lock")
+
+    def fmt(rec):
+        if not rec:
+            return "⏳ No record"
+        status_icon = "✅ Success" if rec["status"] == "success" else ("❌ Failed" if rec["status"] == "failed" else "⏳ Pending")
+        time_str = rec.get("actual_time", "")
+        if time_str:
+            try:
+                time_str = time_str.split("T")[1][:8] if "T" in time_str else time_str[:8]
+            except Exception:
+                pass
+        retries = rec.get("retry_count", 0)
+        return f"{status_icon} | {time_str or 'Not run'} | Retries: {retries}"
+
+    text = (
+        f"📅 <b>Schedule Status — {date_str}</b>\n\n"
+        f"🟢 Unlock (10:00): {fmt(unlock)}\n"
+        f"🔴 Lock (18:00):   {fmt(lock)}"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /stop - stop the bot immediately (Admin DM only)."""
     if not is_admin(update):
@@ -199,6 +240,7 @@ def main() -> None:
             application.add_handler(CommandHandler("stats", stats_command))
             application.add_handler(CommandHandler("health", health_command))
             application.add_handler(CommandHandler("sync", sync_command))
+            application.add_handler(CommandHandler("schedule", schedule_command))
             application.add_handler(CommandHandler("stop", stop_command))
             application.add_handler(CommandHandler("restart", restart_command))
 
