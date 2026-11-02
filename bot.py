@@ -35,6 +35,10 @@ async def post_init(application: Application) -> None:
     # Initialize database
     init_db()
 
+    # Initialize schedule database (must happen before safety check)
+    from schedule_db import init_schedule_db
+    init_schedule_db()
+
     # Startup schedule check - recover from any missed unlock/lock
     await safety_check_job(application.bot)
 
