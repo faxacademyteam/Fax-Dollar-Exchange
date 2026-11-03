@@ -27,7 +27,7 @@ class Config:
 
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Dhaka")
+    TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Kolkata")
 
     # Sync interval (hours) - how often to fetch from API
     SYNC_INTERVAL_HOURS: int = int(os.getenv("SYNC_INTERVAL_HOURS", "24"))
